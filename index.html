@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오사카·교토 진로여행 — 위성 경로지도</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+html, body { width:100%; height:100%; font-family:'Noto Sans KR',sans-serif; background:#111; overflow:hidden; }
+#map { position:absolute; inset:0; z-index:0; }
+
+/* ── 마커 핵심: position:relative 컨테이너, iconAnchor=[0,0] ── */
+.mk-root {
+  position: relative;
+  width: 0; height: 0;          /* 이 점이 정확히 좌표 위치 */
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* 번호 원 — 좌표 중심에서 sz/2 만큼 offset */
+.mk-dot {
+  position: absolute;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-family: 'Noto Sans KR', sans-serif;
+  font-weight: 700; font-size: 11px; color: #fff;
+  border: 2.5px solid rgba(255,255,255,.92);
+  box-shadow: 0 0 0 1.5px rgba(0,0,0,.6), 0 2px 10px rgba(0,0,0,.8);
+  pointer-events: auto; cursor: pointer;
+}
+.mk-dot.base {
+  border-width: 3px;
+  box-shadow: 0 0 0 5px rgba(42,184,184,.3), 0 2px 12px rgba(0,0,0,.8);
+}
+
+/* 라벨 박스 — dot 옆에 절대 위치 */
+.mk-lbl {
+  position: absolute;
+  display: flex; flex-direction: column; gap: 2px;
+  background: rgba(8, 8, 14, 0.94);
+  border-radius: 7px;
+  padding: 5px 10px;
+  white-space: nowrap;
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,.2), 0 3px 14px rgba(0,0,0,.9);
+  pointer-events: auto; cursor: default;
+  /* top:50%; transform:translateY(-50%) 으로 수직 중앙정렬 */
+  top: 50%; transform: translateY(-50%);
+}
+.mk-lbl.r { border-left: 3px solid var(--c); }
+.mk-lbl.l { border-right: 3px solid var(--c); }
+
+.mk-day  { font-size: 9px; font-weight: 700; letter-spacing: 2px; color: var(--c); }
+.mk-name { font-size: 13px; font-weight: 700; color: #fff; line-height: 1.25; }
+
+/* ── 나머지 UI ── */
+#topbar {
+  position:absolute; top:0; left:0; right:0; z-index:1000;
+  background:linear-gradient(to bottom,rgba(0,0,0,.88) 55%,transparent);
+  padding:13px 18px 38px; pointer-events:none;
+}
+#topbar h1 { font-size:16px; font-weight:700; color:#fff; }
+#topbar p  { font-size:10px; color:rgba(255,255,255,.5); margin-top:2px; letter-spacing:1.5px; }
+
+#day-tabs {
+  position:absolute; top:62px; left:50%; transform:translateX(-50%);
+  z-index:1000; display:flex; gap:6px;
+  background:rgba(0,0,0,.75); backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,.15); border-radius:40px; padding:5px 6px;
+}
+.dtab {
+  padding:7px 16px; border-radius:30px; border:none; cursor:pointer;
+  font-size:12px; font-weight:600; font-family:inherit;
+  transition:all .18s; color:rgba(255,255,255,.4); background:transparent; white-space:nowrap;
+}
+.dtab.on { color:#fff!important; }
+.dtab:hover:not(.on) { color:rgba(255,255,255,.75); background:rgba(255,255,255,.07); }
+
+#view-btns {
+  position:absolute; top:116px; left:14px; z-index:1000;
+  display:flex; flex-direction:column; gap:5px;
+}
+.vbtn {
+  background:rgba(0,0,0,.75); backdrop-filter:blur(6px);
+  border:1px solid rgba(255,255,255,.2); color:#fff;
+  padding:7px 13px; border-radius:7px; font-size:11.5px;
+  font-family:inherit; cursor:pointer; white-space:nowrap; transition:background .15s;
+}
+.vbtn:hover { background:rgba(255,255,255,.18); }
+
+#inset {
+  position:absolute; top:116px; right:14px; z-index:1000;
+  width:185px; height:138px; border-radius:9px; overflow:hidden;
+  border:1.5px solid rgba(255,255,255,.25); box-shadow:0 4px 20px rgba(0,0,0,.65);
+}
+#inset-map { width:100%; height:100%; }
+#inset-label {
+  position:absolute; bottom:5px; left:0; right:0; text-align:center;
+  font-size:10px; color:rgba(255,255,255,.8); text-shadow:0 1px 4px #000; pointer-events:none;
+}
+
+#legend {
+  position:absolute; bottom:18px; left:14px; z-index:1000;
+  background:rgba(0,0,0,.82); backdrop-filter:blur(8px);
+  border-radius:10px; padding:10px 14px; border:1px solid rgba(255,255,255,.12);
+}
+.leg-row {
+  display:flex; align-items:center; gap:8px; margin-bottom:6px;
+  font-size:11px; color:#ddd; cursor:pointer; border-radius:5px; padding:3px 5px; transition:background .15s;
+}
+.leg-row:last-child { margin-bottom:0; }
+.leg-row:hover { background:rgba(255,255,255,.08); }
+.leg-row.dimmed { opacity:.25; }
+.leg-line { width:24px; height:3px; border-radius:2px; flex-shrink:0; }
+
+#tile-notice {
+  position:absolute; bottom:18px; right:14px; z-index:1000;
+  background:rgba(0,0,0,.80); backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,200,.2); border-radius:8px;
+  padding:8px 13px; font-size:10.5px; color:rgba(255,255,180,.88); max-width:210px; line-height:1.55;
+}
+#tile-notice b { color:#ffe066; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="topbar">
+  <h1>오사카·교토 3박 4일 진로여행 경로</h1>
+  <p>OSAKA · KYOTO ECO-URBAN ARCHITECTURE STUDY TRIP</p>
+</div>
+<div id="day-tabs">
+  <button class="dtab" data-day="all" onclick="setDay('all')">전체</button>
+  <button class="dtab" data-day="1"   onclick="setDay('1')">DAY 1</button>
+  <button class="dtab" data-day="2"   onclick="setDay('2')">DAY 2</button>
+  <button class="dtab" data-day="3"   onclick="setDay('3')">DAY 3</button>
+  <button class="dtab" data-day="4"   onclick="setDay('4')">DAY 4</button>
+</div>
+<div id="view-btns">
+  <button class="vbtn" onclick="gotoView('japan')">🗾 일본 전체</button>
+  <button class="vbtn" onclick="gotoView('osaka')">🏙 오사카</button>
+  <button class="vbtn" onclick="gotoView('kyoto')">⛩ 교토</button>
+</div>
+<div id="inset"><div id="inset-map"></div><div id="inset-label">✈ 인천 ↔ 간사이 항공편</div></div>
+<div id="legend">
+  <div class="leg-row" data-day="1" onclick="setDay('1')"><div class="leg-line" style="background:#5aaee8"></div>DAY 1 — KIX → 난바 → 도톤보리</div>
+  <div class="leg-row" data-day="2" onclick="setDay('2')"><div class="leg-line" style="background:#3dca80"></div>DAY 2 — 오사카 순환 탐방</div>
+  <div class="leg-row" data-day="3" onclick="setDay('3')"><div class="leg-line" style="background:#c06ada"></div>DAY 3 — 교토 진로 탐방</div>
+  <div class="leg-row" data-day="4" onclick="setDay('4')"><div class="leg-line" style="background:#f0a050"></div>DAY 4 — 오사카성 → KIX</div>
+</div>
+<div id="tile-notice"><b>📌 위성사진 안내</b><br>파일을 브라우저에서 직접 열면 실제 위성사진이 표시됩니다.</div>
+
+<script>
+const C = { 1:'#5aaee8', 2:'#3dca80', 3:'#c06ada', 4:'#f0a050' };
+
+const STOPS = {
+  kix:          [34.4272, 135.2440],
+  namba:        [34.6647, 135.5011],
+  dotonbori:    [34.6695, 135.5013],
+  grandgreen:   [34.7055, 135.4963],
+  nambaparks:   [34.6622, 135.4997],
+  shinsaibashi: [34.6734, 135.5015],
+  machizukuri:  [34.9950, 135.7668],
+  nishijin:     [35.0272, 135.7463],
+  kyotouniv:    [35.0262, 135.7812],
+  gion:         [35.0036, 135.7753],
+  osakacastle:  [34.6873, 135.5262],
+  kix2:         [34.4272, 135.2440],
+};
+
+const SEGS = [
+  [1,'kix','namba'],[1,'namba','dotonbori'],
+  [2,'namba','grandgreen'],[2,'grandgreen','nambaparks'],[2,'nambaparks','shinsaibashi'],[2,'shinsaibashi','namba'],
+  [3,'namba','machizukuri'],[3,'machizukuri','nishijin'],[3,'nishijin','kyotouniv'],[3,'kyotouniv','gion'],[3,'gion','namba'],
+  [4,'namba','osakacastle'],[4,'osakacastle','kix2'],
+];
+
+// day, id, color, sz, num, dayText, nameKo, side('r'=오른쪽/'l'=왼쪽)
+const MDATA = [
+  [1,'kix',          '#5aaee8',30,'✈','DAY 1','간사이국제공항 (KIX)','r'],
+  [0,'namba',        '#2ab8b8',36,'●','BASE', '난바역 · 숙소 거점',  'r'],
+  [1,'dotonbori',    '#5aaee8',26,'2', 'DAY 1','도톤보리',            'r'],
+  [2,'grandgreen',   '#3dca80',26,'3', 'DAY 2','그랜드 그린 오사카',  'r'],
+  [2,'nambaparks',   '#3dca80',26,'4', 'DAY 2','난바 파크스',          'l'],
+  [2,'shinsaibashi', '#3dca80',26,'5', 'DAY 2','신사이바시',           'r'],
+  [3,'machizukuri',  '#c06ada',26,'6', 'DAY 3','마치즈쿠리 센터',     'r'],
+  [3,'nishijin',     '#c06ada',26,'7', 'DAY 3','니시진 직물센터',     'l'],
+  [3,'kyotouniv',    '#c06ada',26,'8', 'DAY 3','교토대학교',           'r'],
+  [3,'gion',         '#c06ada',26,'9', 'DAY 3','기온',                 'r'],
+  [4,'osakacastle',  '#f0a050',26,'10','DAY 4','오사카성 공원',        'r'],
+  [4,'kix2',         '#f0a050',30,'✈','DAY 4','간사이공항 (귀국)',    'l'],
+];
+
+const DAY_BOUNDS = {
+  all:[[34.38,135.19],[35.06,135.83]],
+  1:  [[34.38,135.19],[34.72,135.55]],
+  2:  [[34.62,135.47],[34.73,135.55]],
+  3:  [[34.62,135.47],[35.06,135.83]],
+  4:  [[34.38,135.19],[34.72,135.56]],
+};
+
+// ── 지도 ──
+const map = L.map('map',{zoomControl:false}).setView([34.85,135.55],11);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {attribution:'Tiles © Esri',maxZoom:18}).addTo(map);
+L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  {attribution:'',maxZoom:18,opacity:.88}).addTo(map);
+L.control.zoom({position:'bottomleft'}).addTo(map);
+
+// ── 경로 & 화살표 ──
+const segLayers={1:[],2:[],3:[],4:[]}, arrowPool=[];
+function calcArrow(p1,p2){
+  const a=map.latLngToContainerPoint(p1),b=map.latLngToContainerPoint(p2),t=.54;
+  return{midLL:map.containerPointToLatLng([a.x*(1-t)+b.x*t,a.y*(1-t)+b.y*t]),
+         angle:Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI+90};
+}
+function mkArrow(col,ang){
+  return L.divIcon({html:`<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid ${col};transform:rotate(${ang}deg);margin:-6px 0 0 -7px;filter:drop-shadow(0 1px 4px rgba(0,0,0,.8))"></div>`,iconSize:[0,0],iconAnchor:[0,0],className:''});
+}
+function buildSeg(day,p1,p2){
+  const col=C[day];
+  const sh=L.polyline([p1,p2],{color:'rgba(0,0,0,.5)',weight:8,opacity:.6,lineJoin:'round',lineCap:'round'});
+  const ln=L.polyline([p1,p2],{color:col,weight:4,opacity:.95,lineJoin:'round',lineCap:'round'});
+  const{midLL,angle}=calcArrow(p1,p2);
+  const ar=L.marker(midLL,{icon:mkArrow(col,angle),interactive:false,zIndexOffset:500});
+  sh.addTo(map);ln.addTo(map);ar.addTo(map);sh.bringToBack();
+  const e={sh,ln,ar,p1,p2,col,day};segLayers[day].push(e);arrowPool.push(e);
+}
+SEGS.forEach(([d,a,b])=>buildSeg(d,STOPS[a],STOPS[b]));
+map.on('zoomend moveend',()=>{
+  arrowPool.forEach(e=>{
+    if(!map.hasLayer(e.ar))return;
+    const{midLL,angle}=calcArrow(e.p1,e.p2);
+    e.ar.setLatLng(midLL);e.ar.setIcon(mkArrow(e.col,angle));
+  });
+});
+
+// ── 마커 (핵심: iconAnchor=[0,0], absolute positioning) ──
+const markerLayers={0:[],1:[],2:[],3:[],4:[]};
+
+function makeMarkerIcon(color, sz, num, dayText, nameKo, side, isBase){
+  const half = sz / 2;
+  // gap: dot 가장자리에서 라벨까지 거리
+  const gap = half + 6;
+
+  // 라벨 위치 CSS
+  // 'r': 라벨이 오른쪽 → left:gap, top:50%, translateY(-50%)
+  // 'l': 라벨이 왼쪽  → right:gap (=left:auto, 하지만 abs에선 right 사용)
+  const lblPos = side === 'r'
+    ? `left:${gap}px; top:50%; transform:translateY(-50%);`
+    : `right:${gap}px; top:50%; transform:translateY(-50%);`;
+
+  const lblBorder = side === 'r'
+    ? `border-left:3px solid ${color};`
+    : `border-right:3px solid ${color};`;
+
+  return L.divIcon({
+    html: `
+      <div class="mk-root">
+        <!-- 번호 dot: 중심이 (0,0)에 오도록 left/top = -half -->
+        <div class="mk-dot${isBase?' base':''}"
+          style="width:${sz}px;height:${sz}px;left:${-half}px;top:${-half}px;background:${color};">
+          ${num}
+        </div>
+        <!-- 라벨: dot 옆에 절대위치 -->
+        <div class="mk-lbl" style="${lblPos}${lblBorder}--c:${color};">
+          <span class="mk-day">${dayText}</span>
+          <span class="mk-name">${nameKo}</span>
+        </div>
+      </div>`,
+    // iconAnchor [0,0] = 이 HTML의 (0,0)이 좌표 위치
+    iconSize:   [0, 0],
+    iconAnchor: [0, 0],
+    className:  ''
+  });
+}
+
+MDATA.forEach(([day,id,color,sz,num,dayText,nameKo,side])=>{
+  const isBase=(id==='namba');
+  const icon=makeMarkerIcon(color,sz,num,dayText,nameKo,side,isBase);
+  const mkr=L.marker(STOPS[id],{icon,zIndexOffset:300}).addTo(map);
+  markerLayers[day].push(mkr);
+});
+
+// ── DAY 필터 ──
+function setDay(day){
+  const isAll=(day==='all');
+  document.querySelectorAll('.dtab').forEach(btn=>{
+    const on=btn.dataset.day===day;
+    btn.classList.toggle('on',on);
+    const col=isAll?'#fff':C[+day];
+    btn.style.background=on?(isAll?'rgba(255,255,255,.15)':col+'28'):'';
+    btn.style.color=on?(isAll?'#fff':col):'';
+    btn.style.boxShadow=on?`0 0 0 1.5px ${isAll?'rgba(255,255,255,.3)':col+'80'}`:'';
+  });
+  document.querySelectorAll('.leg-row').forEach(r=>{
+    r.classList.toggle('dimmed',!isAll&&r.dataset.day!==day);
+  });
+  [1,2,3,4].forEach(d=>{
+    const show=isAll||String(d)===day;
+    segLayers[d].forEach(e=>{
+      if(show){if(!map.hasLayer(e.ln)){e.sh.addTo(map);e.ln.addTo(map);e.ar.addTo(map);}}
+      else    {if( map.hasLayer(e.ln)){map.removeLayer(e.sh);map.removeLayer(e.ln);map.removeLayer(e.ar);}}
+    });
+    markerLayers[d].forEach(m=>{
+      if(show){if(!map.hasLayer(m))m.addTo(map);}
+      else    {if( map.hasLayer(m)) map.removeLayer(m);}
+    });
+  });
+  markerLayers[0].forEach(m=>{if(!map.hasLayer(m))m.addTo(map);});
+  map.flyToBounds(DAY_BOUNDS[day]||DAY_BOUNDS.all,{padding:[60,60],duration:.9,maxZoom:14});
+}
+setDay('all');
+
+function gotoView(v){
+  ({japan:()=>map.flyToBounds([[34.38,135.19],[35.06,135.83]],{padding:[55,55],duration:1,maxZoom:15}),
+    osaka:()=>map.flyToBounds([[34.62,135.47],[34.73,135.55]],{padding:[55,55],duration:1,maxZoom:15}),
+    kyoto:()=>map.flyToBounds([[34.97,135.73],[35.06,135.80]],{padding:[55,55],duration:1,maxZoom:15}),
+  })[v]();
+}
+
+// ── 인셋 ──
+const im=L.map('inset-map',{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false}).setView([36,131],5);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:10}).addTo(im);
+const ICN=[37.4602,126.4407],KIX=[34.4272,135.2440];
+[[ICN,KIX,[1.8,-.5],'#ffcc44'],[KIX,ICN,[.8,.5],'#f0a050']].forEach(([p1,p2,b,c])=>{
+  const pts=[];for(let t=0;t<=1;t+=.02){const mx=(p1[0]+p2[0])/2+b[0],my=(p1[1]+p2[1])/2+b[1];pts.push([(1-t)**2*p1[0]+2*(1-t)*t*mx+t**2*p2[0],(1-t)**2*p1[1]+2*(1-t)*t*my+t**2*p2[1]]);}
+  L.polyline(pts,{color:c,weight:2,opacity:.85,dashArray:'6 4'}).addTo(im);
+});
+[[ICN,'ICN','#6ab8e8'],[KIX,'KIX','#ffcc44']].forEach(([pos,lbl,col])=>{
+  L.marker(pos,{icon:L.divIcon({html:`<div style="background:${col};color:#000;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.5)">${lbl}</div>`,className:'',iconAnchor:[15,8]})}).addTo(im);
+});
+</script>
+</body>
+</html>
